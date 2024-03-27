@@ -4,13 +4,30 @@ import shutil
 import threading
 import re
 
+def search_vivado_bat_path() -> str:
+    import sys
+    if sys.platform != "win32":
+        raise OSError("Only support windows platform")
+
+    if os.path.exists("C:\\Xilinx\\Vivado"):
+        for f in os.scandir("C:\\Xilinx\\Vivado"):
+            if f.is_dir() and re.findall(r"\d+\.\d+", f.name):
+                bat_path = os.path.join(f.path, "bin", "vivado.bat")
+                if os.path.exists(bat_path):
+                    return bat_path
+
+    return ""
 
 class TclProcessPopen(subprocess.Popen):
-    def __init__(self, vivado_bat_path: str, *args, output=False, save_log: str = "", clean=True, encode="GBK",
+    def __init__(self, vivado_bat_path: str = "", *args, output=False, save_log: str = "", clean=True, encode="GBK",
                  escape=(), shell=True,
                  stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                  stderr=subprocess.PIPE,
                  **kwargs):
+        self._vivado_bat_path = vivado_bat_path if vivado_bat_path else search_vivado_bat_path()
+        if not self._vivado_bat_path or not os.path.exists(self._vivado_bat_path):
+            raise FileNotFoundError(f"Can't find vivado.bat, {self._vivado_bat_path}")
+
         super().__init__([vivado_bat_path, "-mode", "tcl"], *args, shell=shell, stdin=stdin, stdout=stdout,
                          stderr=stderr, **kwargs)
         self._cache = os.getcwd()
