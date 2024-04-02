@@ -1,7 +1,5 @@
-from src.tcl_process import TclProcessPopen
-from src.vivado_error import *
+from ViPyTcl.core import *
 from typing import Tuple, List
-import re
 from enum import Enum
 
 
@@ -13,6 +11,17 @@ class RunsType(Enum):
 
     def __str__(self):
         return self.value
+
+
+class SimMode(Enum):
+    Behavioral = "behavioral"
+    PostSynthesis = "post-synthesis"
+    PostImplementation = "post-implementation"
+
+
+class SimType(Enum):
+    Functional = "functional"
+    Timing = "timing"
 
 
 CommonPropertyType = {
@@ -156,6 +165,28 @@ class ViObjRun(ViObj):
             return RunsType.NoneType
 
 
+class ViObjDesign(ViObj):
+    def __init__(self, tcl_popen: TclProcessPopen, design_name: str):
+        super().__init__(tcl_popen, "get_designs", design_name)
+
+    def get_design_type(self):
+        result = self()
+        if not result:
+            raise ViUnexpectedEmptyTclReturnError
+
+        if "WARNING: [Vivado 12-628]" in result[0]:
+            return RunsType.NoneType
+
+        is_synth = int(self._tcl_popen.run(f"get_property IS_SYNTHESIS [get_runs {self.name}]")[0])
+        is_impl = int(self._tcl_popen.run(f"get_property IS_IMPLEMENTATION [get_runs {self.name}]")[0])
+        if is_synth:
+            return RunsType.SYNTH
+        elif is_impl:
+            return RunsType.IMPL
+        else:
+            return RunsType.NoneType
+
+
 class ViObjFileset(ViObj):
     def __init__(self, tcl_popen: TclProcessPopen, fileset_name: str):
         super().__init__(tcl_popen, f"get_fileset", fileset_name)
@@ -165,6 +196,10 @@ class ViObjFileset(ViObj):
 
 
 class ViObjConstrs(ViObjFileset):
+    pass
+
+
+class ViObjSimset(ViObjFileset):
     pass
 
 
@@ -203,3 +238,24 @@ class ViObjTile(ViObj):
 class ViObjPin(ViObj):
     def __init__(self, tcl_popen: TclProcessPopen, name: str):
         super().__init__(tcl_popen, f"get_pins", name)
+
+
+class ViObjPort(ViObj):
+    def __init__(self, tcl_popen: TclProcessPopen, name: str):
+        super().__init__(tcl_popen, "get_ports", name)
+
+
+class ViObjHWServer(ViObj):
+    def __init__(self, tcl_popen: TclProcessPopen, name: str):
+        super().__init__(tcl_popen, "get_hw_server", name)
+        self.ip, self.port = name.split(":")
+
+
+class ViObjHWDevice(ViObj):
+    def __init__(self, tcl_popen: TclProcessPopen, name: str):
+        super().__init__(tcl_popen, "get_hw_device", name)
+
+
+class ViObjHWTarget(ViObj):
+    def __init__(self, tcl_popen: TclProcessPopen, name: str):
+        super().__init__(tcl_popen, "get_hw_target", name)

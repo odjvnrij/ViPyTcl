@@ -1,7 +1,9 @@
 import multiprocessing
 import os
 
-from base import *
+from ViPyTcl import _vivado_bat_path
+from ..base import *
+from .tcl_process import *
 
 
 def find_vivado_bat() -> str:
@@ -43,7 +45,7 @@ class VivadoPrj:
         if not os.path.exists(prj_path):
             raise FileNotFoundError(f"prj path not exist {prj_path}")
 
-        self.bat_path = bat_path if bat_path else find_vivado_bat()
+        self.bat_path = bat_path if bat_path else _vivado_bat_path
 
         self._tcl_proc = TclProcessPopen(self.bat_path, output=output, error_check=error_check, **kwargs)
         self._is_exit = False
@@ -123,12 +125,19 @@ class VivadoPrj:
                     of_objects: str or ViObj = "", **kwargs) -> List[str]:
         return self._common_get("get_designs", pattern, regexp, filter_, of_objects, **kwargs)
 
-    def current_design(self, *args, **kwargs) -> List[str]:
-        result = self.tcl("current_design" + tcl_args_parse(*args, **kwargs))
-        return result[0].split()
+    def current_design(self, design: str or ViObjDesign = "", **kwargs) -> ViObjDesign or None:
+        tcl = f"current_design {design}"
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        result = self.tcl(tcl)[0]
 
-    def close_design(self, *args, **kwargs) -> List[str]:
-        return self.tcl("close_design" + tcl_args_parse(*args, **kwargs))
+        if "WARNING: " in result:
+            return None
+        return ViObjDesign(self._tcl_proc, result)
+
+    def close_design(self, design: str or ViObjDesign = "", **kwargs) -> List[str]:
+        tcl = f"close_design {design}"
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        return self.tcl(tcl)
 
     """ ============================ runs =========================== """
 
@@ -201,18 +210,37 @@ class VivadoPrj:
         filesets = self._common_get("get_filesets", pattern, regexp, filter_, of_objects, **kwargs)
         return tuple(ViObjFileset(self._tcl_proc, fileset) for fileset in filesets)
 
-    def current_fileset(self, *args, **kwargs) -> ViObjFileset:
-        result = self.tcl("current_fileset" + tcl_args_parse(*args, **kwargs))
+    def current_fileset(self, fileset: str or ViObjFileset = "", **kwargs) -> ViObjFileset or None:
+        tcl = f"current_fileset {fileset}"
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        result = self.tcl(tcl)
         fileset = result[0]
+        if "WARNNING: " in fileset:
+            return None
         return ViObjFileset(self._tcl_proc, fileset)
 
-    def current_constrs(self, *args, **kwargs) -> ViObjFileset:
-        result = self.tcl("current_fileset -c" + tcl_args_parse(*args, **kwargs))
+    def current_constrs(self, fileset: str or ViObjFileset = "", **kwargs) -> ViObjFileset or None:
+        tcl = f"current_fileset {fileset} -c"
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        result = self.tcl(tcl)
         fileset = result[0]
+        if "WARNNING: " in fileset:
+            return None
         return ViObjFileset(self._tcl_proc, fileset)
 
-    def delete_fileset(self, *args, **kwargs) -> List[str]:
-        return self.tcl("delete_fileset" + tcl_args_parse(*args, **kwargs))
+    def current_simset(self, fileset: str or ViObjFileset = "", **kwargs) -> ViObjSimset or None:
+        tcl = f"current_fileset {fileset} -s"
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        result = self.tcl(tcl)
+        fileset = result[0]
+        if "WARNNING: " in fileset:
+            return None
+        return ViObjSimset(self._tcl_proc, fileset)
+
+    def delete_fileset(self, fileset: str or ViObjFileset = "", **kwargs) -> List[str]:
+        tcl = f"delete_fileset {fileset}"
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        return self.tcl(tcl)
 
     """ ============================ file =========================== """
 
@@ -332,8 +360,233 @@ class VivadoPrj:
 
     """ ============================ bel =========================== """
 
+    def get_bels(self,
+                 pattern: str = "*",
+                 regexp: bool = False,
+                 filter_: Filter = None or str,
+                 of_objects: str or ViObj = "",
+                 **kwargs) -> Tuple[ViObjBel, ...]:
+        bels = self._common_get("get_bels", pattern, regexp, filter_, of_objects, **kwargs)
+        return tuple(ViObjBel(self._tcl_proc, bel) for bel in bels)
+
+    def get_bel_pins(self,
+                     pattern: str = "*",
+                     regexp: bool = False,
+                     filter_: Filter = None or str,
+                     of_objects: str or ViObjBel = "",
+                     **kwargs) -> Tuple[ViObjPin, ...]:
+        pins = self._common_get("get_bel_pins", pattern, regexp, filter_, of_objects, **kwargs)
+        return tuple(ViObjPin(self._tcl_proc, pin) for pin in pins)
+
     """ ============================ site =========================== """
+
+    def get_sites(self,
+                  pattern: str = "*",
+                  regexp: bool = False,
+                  filter_: Filter = None or str,
+                  of_objects: str or ViObj = "",
+                  **kwargs) -> Tuple[ViObjSite, ...]:
+        sites = self._common_get("get_sites", pattern, regexp, filter_, of_objects, **kwargs)
+        return tuple(ViObjSite(self._tcl_proc, site) for site in sites)
+
+    def get_site_pins(self,
+                      pattern: str = "*",
+                      regexp: bool = False,
+                      filter_: Filter = None or str,
+                      of_objects: str or ViObjBel = "",
+                      **kwargs) -> Tuple[ViObjPin, ...]:
+        pins = self._common_get("get_site_pins", pattern, regexp, filter_, of_objects, **kwargs)
+        return tuple(ViObjPin(self._tcl_proc, pin) for pin in pins)
 
     """ ============================ tile =========================== """
 
+    def get_tiles(self,
+                  pattern: str = "*",
+                  regexp: bool = False,
+                  filter_: Filter = None or str,
+                  of_objects: str or ViObj = "",
+                  **kwargs) -> Tuple[ViObjTile, ...]:
+        tiles = self._common_get("get_tiles", pattern, regexp, filter_, of_objects, **kwargs)
+        return tuple(ViObjTile(self._tcl_proc, tile) for tile in tiles)
+
     """ ============================ pins =========================== """
+
+    def get_pins(self,
+                 pattern: str = "*",
+                 regexp: bool = False,
+                 filter_: Filter = None or str,
+                 of_objects: str or ViObj = "",
+                 **kwargs) -> Tuple[ViObjPin, ...]:
+        pins = self._common_get("get_pins", pattern, regexp, filter_, of_objects, **kwargs)
+        return tuple(ViObjPin(self._tcl_proc, pin) for pin in pins)
+
+    def rename_pin(self, from_pin: str or ViObjPin, to_pin: str, **kwargs) -> ViObjPin:
+        if isinstance(from_pin, ViObjPin):
+            tcl = f"rename_pin {from_pin} -to {{{to_pin}}}"
+        else:
+            tcl = f"rename_pin {from_pin} -to {{{to_pin}}}"
+
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        return ViObjPin(self._tcl_proc, to_pin)
+
+    def remove_pin(self, pins: str or List[ViObjPin], **kwargs) -> List[str]:
+        if isinstance(pins, str):
+            cells_list = ViObjPin(self._tcl_proc, pins)
+        else:
+            if isinstance(pins[0], ViObjCell):
+                cells_list = ViObjList(pins)
+            else:
+                cells_list = ViObjPin(self._tcl_proc, " ".join(pins))
+
+        tcl = f"remove_pin {cells_list}"
+        tcl += tcl_args_parse(kwargs) if kwargs else ""
+        return self.tcl(tcl)
+
+    """ ============================ ports =========================== """
+
+    def get_ports(self,
+                  pattern: str = "*",
+                  regexp: bool = False,
+                  filter_: Filter = None or str,
+                  of_objects: str or ViObj = "",
+                  **kwargs) -> Tuple[ViObjPort, ...]:
+        ports = self._common_get("get_ports", pattern, regexp, filter_, of_objects, **kwargs)
+        return tuple(ViObjPort(self._tcl_proc, port) for port in ports)
+
+    def rename_port(self, from_port: str or ViObjPort, to_port: str, **kwargs) -> ViObjPort:
+        if isinstance(from_port, ViObjPort):
+            tcl = f"rename_port {from_port} -to {{{to_port}}}"
+        else:
+            tcl = f"rename_port {{{from_port}}} -to {{{to_port}}}"
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        return ViObjPort(self._tcl_proc, to_port)
+
+    def remove_port(self, ports: str or List[ViObjPort], **kwargs) -> List[str]:
+        if isinstance(ports, str):
+            ports_list = ViObjPort(self._tcl_proc, ports)
+        else:
+            if isinstance(ports[0], ViObjPort):
+                ports_list = ViObjList(ports)
+            else:
+                ports_list = ViObjPort(self._tcl_proc, " ".join(ports))
+
+        tcl = f"remove_port {ports_list}"
+        tcl += tcl_args_parse(kwargs) if kwargs else ""
+        return self.tcl(tcl)
+
+    """ ================= hw ================="""
+    "connect_hw_server"
+
+    def open_hw_manager(self, **kwargs) -> List[str]:
+        return self.tcl("open_hw_manager" + tcl_args_parse(**kwargs) if kwargs else "")
+
+    def close_hw_manager(self, **kwargs) -> List[str]:
+        return self.tcl("close_hw_manager" + tcl_args_parse(**kwargs) if kwargs else "")
+
+    def get_hw_server(self,
+                      pattern: str = "*",
+                      regexp: bool = False,
+                      filter_: Filter = None or str,
+                      of_objects: str or ViObj = "",
+                      **kwargs) -> Tuple[ViObjHWServer, ...]:
+        servers = self._common_get("get_hw_server", pattern, regexp, filter_, of_objects, **kwargs)
+        return tuple(ViObjHWServer(self._tcl_proc, server) for server in servers)
+
+    def current_hw_server(self, hw_server: str or ViObjHWServer, **kwargs) -> ViObjHWServer or None:
+        tcl = f"current_hw_server {hw_server}"
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        result = self.tcl(tcl)[0]
+
+        if "WARNING: [Labtoolstcl 44-29]" in result:
+            return None
+        return ViObjHWServer(self._tcl_proc, result)
+
+    def connect_hw_server(self, url: str or ViObjHWServer, **kwargs) -> List[str]:
+        tcl = f"connect_hw_server {url}"
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        return self.tcl(tcl)
+
+    def disconnect_hw_server(self, url: str or ViObjHWServer, **kwargs) -> List[str]:
+        if isinstance(url, ViObjHWServer):
+            tcl = f"disconnect_hw_server {url}"
+        else:
+            tcl = f"disconnect_hw_server {{{url}}}"
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        return self.tcl(tcl)
+
+    def refresh_hw_server(self, url: str or ViObjHWServer, force_poll: bool = False, **kwargs) -> List[str]:
+        tcl = f"refresh_hw_server {url}"
+        tcl += " -force_poll" if force_poll else ""
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        return self.tcl(tcl)
+
+    def get_hw_devices(self,
+                       pattern: str = "*",
+                       regexp: bool = False,
+                       filter_: Filter = None or str,
+                       of_objects: str or ViObj = "",
+                       **kwargs) -> Tuple[ViObjHWDevice, ...]:
+        devs = self._common_get("get_hw_server", pattern, regexp, filter_, of_objects, **kwargs)
+        return tuple(ViObjHWDevice(self._tcl_proc, dev) for dev in devs)
+
+    def current_hw_device(self, dev: str or ViObjHWDevice, **kwargs) -> ViObjHWDevice or None:
+        tcl = f"current_hw_device {dev}"
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        result = self.tcl(tcl)[0]
+        if "WARNING: " in result[0]:
+            return None
+        return ViObjHWDevice(self._tcl_proc, result)
+
+    def create_hw_target(self, hw_target_name: str, copy: str or ViObjHWTarget, **kwargs) -> ViObjHWTarget:
+        tcl = f"create_hw_target {{{hw_target_name}}}"
+        if isinstance(copy, ViObjHWTarget):
+            tcl += f" -copy {copy}"
+        else:
+            tcl += f" -copy {{{copy}}}"
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        self.tcl(tcl)
+        return ViObjHWTarget(self._tcl_proc, hw_target_name)
+
+    def get_hw_target(self,
+                      pattern: str = "*",
+                      regexp: bool = False,
+                      filter_: Filter = None or str,
+                      of_objects: str or ViObj = "",
+                      **kwargs) -> Tuple[ViObjHWTarget, ...]:
+        tars = self._common_get("get_hw_target", pattern, regexp, filter_, of_objects, **kwargs)
+        return tuple(ViObjHWTarget(self._tcl_proc, tar) for tar in tars)
+
+    def current_hw_target(self, tar: str or ViObjHWTarget, **kwargs) -> List or Tuple[ViObjHWTarget] or None:
+        tcl = f"get_hw_target {tar}"
+        tcl += tcl_args_parse(**kwargs) if kwargs else ""
+        result = self.tcl(tcl)[0]
+
+        if "WARNING: [" in result[0]:
+            return []
+        return ViObjHWTarget(self._tcl_proc, result)
+
+    """ ================= bitstream ================="""
+
+    def write_bits(self, bit_path: str, force: bool = False) -> List[str]:
+        if self.current_design().get_design_type() is not RunsType.IMPL:
+            raise ViNotInRightDesign("write bitstream must be in impl design")
+
+        os.makedirs(bit_path, exist_ok=True)
+        bit_path = bit_path.replace("\\", "/")
+        tcl = f"write_bitstream -force {bit_path}" if force else f"write_bitstream {bit_path}"
+        return self.tcl(tcl)
+
+    def program_bits(self, bit_path: str) -> List[str]:
+        if not os.path.exists(bit_path):
+            raise FileNotFoundError(f"bit file not found: {bit_path}")
+
+        bit_path = bit_path.replace("\\", "/")
+        return self.tcls("open_hw_manager",
+                         "connect_hw_server",
+                         "open_hw_target",
+                         "current_hw_device [lindex [get_hw_devices] 0]",
+                         "refresh_hw_device -update_hw_probes false [current_hw_device]",
+                         f"set_property PROGRAM.FILE {bit_path} [current_hw_device]",
+                         "program_hw_devices [current_hw_device]",
+                         "close_hw_manager"
+                         )
