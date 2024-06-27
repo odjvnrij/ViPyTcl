@@ -44,11 +44,11 @@ class TclProcessPopen(subprocess.Popen):
         self._cur_cmd_done = threading.Event()
         self._lock = threading.Lock()
 
-        self._recv_th_obj = threading.Thread(target=self._recv_th)
+        self._recv_th_obj = threading.Thread(target=self._recv_th, daemon=True)
         self._recv_th_obj.start()
 
         if self._output_stdout:
-            self._err_th_obj = threading.Thread(target=self._err_th)
+            self._err_th_obj = threading.Thread(target=self._err_th, daemon=True)
             self._err_th_obj.start()
 
     def clean_vivado_cache(self) -> None:

@@ -590,3 +590,33 @@ class VivadoPrj:
                          "program_hw_devices [current_hw_device]",
                          "close_hw_manager"
                          )
+
+
+DefaultTclProc = None
+
+
+def program_bits(bit_path: str, device: str = "", **kwargs):
+    if not os.path.exists(bit_path):
+        raise FileNotFoundError(f"bit file not found: {bit_path}")
+
+    global DefaultTclProc
+
+    if DefaultTclProc is None:
+        DefaultTclProc = TclProcessPopen(find_vivado_bat(), **kwargs)
+
+    if isinstance(DefaultTclProc, TclProcessPopen):
+        device = device if device else "[lindex [get_hw_devices] 0]"
+        DefaultTclProc.run(f"""
+open_hw_manager
+connect_hw_server
+open_hw_target
+current_hw_device {device}
+refresh_hw_device -update_hw_probes false [current_hw_device]
+"set_property PROGRAM.FILE {bit_path} [current_hw_device]
+program_hw_devices [current_hw_device]
+close_hw_manager""")  # type: TclProcessPopen
+
+    else:
+        raise TypeError(f"PrgBitTclProc type error: {type(DefaultTclProc)}")
+
+program_bit = program_bits
