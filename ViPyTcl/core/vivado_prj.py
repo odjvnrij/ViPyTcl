@@ -45,7 +45,7 @@ class VivadoPrj:
         if not os.path.exists(prj_path):
             raise FileNotFoundError(f"prj path not exist {prj_path}")
 
-        self.bat_path = bat_path if bat_path else _vivado_bat_path
+        self.bat_path = bat_path if bat_path else DefaultVivadoBatPath
 
         self._tcl_proc = TclProcessPopen(self.bat_path, output=output, error_check=error_check, **kwargs)
         self._is_exit = False
