@@ -5,25 +5,112 @@ import subprocess
 import threading
 import traceback
 
-from .vivado_error import VivadoError
+from .global_var import *
+from .vivado_error import get_err_from_str
 
 DontDoPutsCmd = {"puts", "for", "foreach", "while", "source"}
 
 
-class TclProcessPopen(subprocess.Popen):
-    def __init__(self, vivado_bat_path: str, *args, output=False, save_log: str = "", clean=True, error_check=True,
-                 encode="GBK",
+class BaseTclProcess:
+    def __init__(self):
+        self._is_recv = False
+        self._is_cur_out = False
+        self._is_terminate = False
+        self._cur_cmd = None  # type: str or None
+        self._cur_out = []
+        self._cur_err = None
+        self._error_check = True
+        self._timeout = None
+        self._cur_cmd_done = threading.Event()
+        self._lock = threading.Lock()
+
+        self._recv_th_obj = None
+        self._err_th_obj = None
+
+        self._escape = ()
+
+    def terminate(self):
+        raise NotImplemented
+
+    close = terminate
+
+    def open(self):
+        raise NotImplemented
+
+    def _recv_th(self):
+        raise NotImplemented
+
+    def _escape_tcl(self, s: str) -> str:
+        """
+        转义tcl语句
+        :param s:
+        :return:
+        """
+        for esc in self._escape:
+            s = s.replace(esc, f"\\{esc}")
+        return s
+
+    def _send_cmd(self, tcl: str, raw: bool = False):
+        raise NotImplemented
+
+    def run(self, tcl, raw: bool = False, timeout: int = None) -> list:
+        """
+        阻塞方式运行tcl语句，完成后返回输出的信息列表
+        :param tcl:
+            可以是多行的 tcl 语句通过 \n 拼接的，这是 puts优化只会识别检测第一个命令
+        :param raw: 是否优化输出
+            True: 绝对不添加 puts 优化输出
+            False: 添加 puts 优化输出
+        :param timeout: 单命令运行timeout，sec
+        :return:
+        """
+        if self._is_terminate:
+            raise ValueError("Tcl process has terminate")
+
+        tcl = tcl.strip(" ").strip("\n")
+        if not tcl:
+            raise ValueError("tcl can't be empty")
+
+        self._lock.acquire()
+        self._send_cmd(tcl, raw=raw)
+
+        timeout = timeout if timeout else None
+        in_time = self._cur_cmd_done.wait(timeout)
+        output, self._cur_out = self._cur_out, []
+
+        if self._error_check:
+            for out in output:
+                if out.startswith("ERROR"):
+                    self._cur_err = get_err_from_str(out)
+
+        self._lock.release()
+
+        if not in_time:
+            raise TimeoutError(f"tcl command timeout: {tcl}")
+
+        if self._cur_err:
+            raise self._cur_err
+
+        return output
+
+
+class TclProcessPopen(subprocess.Popen, BaseTclProcess):
+    def __init__(self, vivado_bat_path: str = "", *args, output=False, save_log: str = "", clean=True, error_check=True,
+                 encode="GBK", delay: bool = False,
                  escape=(), shell=True, output_stdout=False,
                  stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                  stderr=subprocess.PIPE,
                  **kwargs):
-        self._vivado_bat_path = vivado_bat_path
+        BaseTclProcess.__init__(self)
+
+        self._vivado_bat_path = vivado_bat_path if vivado_bat_path else DefaultVivadoBatPath
         if not self._vivado_bat_path or not os.path.exists(self._vivado_bat_path):
             raise FileNotFoundError(f"Can't find vivado.bat, {self._vivado_bat_path}")
 
         self._major_cmd = ["%SystemRoot%\system32\cmd.exe", "/k", self._vivado_bat_path, "-mode", "tcl"]
-        super().__init__(self._major_cmd, *args, shell=shell,
-                         stdin=stdin, stdout=stdout, stderr=stderr, **kwargs)
+        subprocess.Popen.__init__(self, self._major_cmd, *args, shell=shell,
+                                  stdin=stdin, stdout=stdout, stderr=stderr, **kwargs)
+
         self._cache = os.getcwd()
         self._output = output
         self._output_stdout = output_stdout
@@ -35,7 +122,7 @@ class TclProcessPopen(subprocess.Popen):
         self._log_path = os.path.join(self._cache, "vivado.log")
         self._jou_path = os.path.join(self._cache, "vivado.jou")
 
-        self._is_recv = True
+        self._is_recv = False
         self._is_cur_out = False
         self._is_terminate = False
         self._cur_cmd = None  # type: str or None
@@ -43,7 +130,14 @@ class TclProcessPopen(subprocess.Popen):
         self._cur_err = None
         self._cur_cmd_done = threading.Event()
         self._lock = threading.Lock()
+        if not delay:
+            self.open()
 
+    def open(self):
+        if self._is_recv:
+            return
+
+        self._is_recv = True
         self._recv_th_obj = threading.Thread(target=self._recv_th, daemon=True)
         self._recv_th_obj.start()
 
@@ -124,10 +218,6 @@ class TclProcessPopen(subprocess.Popen):
                 if not self._cur_cmd:
                     continue
 
-                if self._error_check and s.startswith("ERROR"):
-                    self._cur_cmd_done.set()
-                    self._cur_err = VivadoError.from_str(s)
-
                 ret = re.findall(r"^\[Tcl (end|run)]\s?.*", s)
                 if ret:
                     ret = ret[0]
@@ -167,7 +257,7 @@ class TclProcessPopen(subprocess.Popen):
             print("OSError", tcl)
             raise e
 
-    def _send_cmd(self, tcl: str, raw: bool = False) -> None:
+    def _send_cmd(self, tcl: str, raw: bool = False, **kwargs) -> None:
         """
         发送tcl语句
         注：
@@ -194,33 +284,3 @@ class TclProcessPopen(subprocess.Popen):
             self._write_2_stdin(f'puts [{tcl}]')
 
         self._write_2_stdin(f'puts "\[Tcl end\]"')
-
-    def run(self, tcl, raw: bool = False) -> list:
-        """
-        阻塞方式运行tcl语句，完成后返回输出的信息列表
-        :param tcl:
-            可以是多行的 tcl 语句通过 \n 拼接的，这是 puts优化只会识别检测第一个命令
-        :param raw: 是否优化输出
-            True: 绝对不添加 puts 优化输出
-            False: 添加 puts 优化输出
-        :return:
-        """
-        if self._is_terminate:
-            raise ValueError("Tcl process has terminate")
-
-        tcl = tcl.strip(" ").strip("\n")
-        if not tcl:
-            raise ValueError("tcl can't be empty")
-
-        self._lock.acquire()
-
-        self._send_cmd(tcl, raw=raw)
-        self._cur_cmd_done.wait()
-
-        output, self._cur_out = self._cur_out, []
-        self._lock.release()
-
-        if self._cur_err:
-            raise self._cur_err
-
-        return output

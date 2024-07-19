@@ -7,9 +7,10 @@ README = (here / "README.md").read_text(encoding="utf-8")
 VERSION = (here / "VERSION").read_text(encoding="utf-8").strip()
 
 excluded_packages = ["docs", "tests", "tests.*"]
+packages = ['ViPyTcl']
 
 setup(
-    name="VivadoPyTcl",
+    name="ViPyTcl",
     version=VERSION,
     description="pyvtcl is a python wrapper for vivado tcl process, you can run tcl cmd directly in python though string and get the result.",
     long_description=README,

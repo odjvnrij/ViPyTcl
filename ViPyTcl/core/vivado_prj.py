@@ -1,7 +1,7 @@
 import multiprocessing
 import os
 
-from ViPyTcl import _vivado_bat_path
+from .global_var import DefaultVivadoBatPath
 from ..base import *
 from .tcl_process import *
 

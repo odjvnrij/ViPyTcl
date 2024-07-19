@@ -1,37 +1,22 @@
 import os
 from .core.tcl_process import TclProcessPopen
 from .core.vivado_prj import VivadoPrj
+from .core.global_var import DefaultVivadoBatPath, find_vivado_bat
 from .base import *
 
-__all__ = ["VivadoPrj", "TclProcessPopen", "program_bits", "tcl", "terminate", "viproperty"]
+__all__ = ["VivadoPrj", "TclProcessPopen", "program_bits", "tcl", "terminate", "viproperty", "DefaultVivadoBatPath"]
 
-__author__  = "odjvnrij <odjvnrij72@outlook.com>"
-__status__  = "production"
+__author__ = "odjvnrij <odjvnrij72@outlook.com>"
+__status__ = "production"
 # The following module attributes are no longer updated.
 __version__ = "1.0"
-__date__    = "03 April 2024"
+__date__ = "03 April 2024"
 
-def find_vivado_bat() -> str:
-    import sys
-    if sys.platform != "win32":
-        raise OSError("Only support windows platform")
-
-    if os.path.exists("C:\\Xilinx\\Vivado"):
-        for f in os.scandir("C:\\Xilinx\\Vivado"):
-            if f.is_dir() and re.findall(r"\d+\.\d+", f.name):
-                bat_path = os.path.join(f.path, "bin", "vivado.bat")
-                if os.path.exists(bat_path):
-                    return bat_path
-
-    return ""
-
-
-_tcl_popen = None       # type: TclProcessPopen or None
-_vivado_bat_path = find_vivado_bat()
+_tcl_popen = None  # type: TclProcessPopen or None
 
 
 def program_bits(bits_path: str, vivado_bat_path: str = ""):
-    vivado_bat_path = vivado_bat_path if vivado_bat_path else _vivado_bat_path
+    vivado_bat_path = vivado_bat_path if vivado_bat_path else DefaultVivadoBatPath
 
     global _tcl_popen
     if not _tcl_popen:
@@ -52,7 +37,7 @@ def program_bits(bits_path: str, vivado_bat_path: str = ""):
 
 
 def tcl(cmd: str, vivado_bat_path: str = ""):
-    vivado_bat_path = vivado_bat_path if vivado_bat_path else _vivado_bat_path
+    vivado_bat_path = vivado_bat_path if vivado_bat_path else DefaultVivadoBatPath
 
     global _tcl_popen
     if not _tcl_popen:
