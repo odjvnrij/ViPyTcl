@@ -1,7 +1,6 @@
-from ViPyTcl.core import *
 from typing import Tuple, List
 from enum import Enum
-
+from .vivado_error import *
 
 class RunsType(Enum):
     NoneType = ""
@@ -48,7 +47,7 @@ def tcl_args_parse(*args, **kwargs):
 class ViObj:
     """ future feature"""
 
-    def __init__(self, tcl_popen: TclProcessPopen, tcl: str, name: str, **kwargs):
+    def __init__(self, tcl_popen, tcl: str, name: str, **kwargs):
         self._tcl_popen = tcl_popen
         self.tcl = tcl
         self.name = name
@@ -144,7 +143,7 @@ class ViObjList:
 
 
 class ViObjRun(ViObj):
-    def __init__(self, tcl_popen: TclProcessPopen, run_name: str):
+    def __init__(self, tcl_popen, run_name: str):
         super().__init__(tcl_popen, f"get_runs", run_name)
 
     def get_run_type(self):
@@ -166,7 +165,7 @@ class ViObjRun(ViObj):
 
 
 class ViObjDesign(ViObj):
-    def __init__(self, tcl_popen: TclProcessPopen, design_name: str):
+    def __init__(self, tcl_popen, design_name: str):
         super().__init__(tcl_popen, "get_designs", design_name)
 
     def get_design_type(self):
@@ -188,7 +187,7 @@ class ViObjDesign(ViObj):
 
 
 class ViObjFileset(ViObj):
-    def __init__(self, tcl_popen: TclProcessPopen, fileset_name: str):
+    def __init__(self, tcl_popen, fileset_name: str):
         super().__init__(tcl_popen, f"get_fileset", fileset_name)
 
     def get_fileset_type(self):
@@ -204,7 +203,7 @@ class ViObjSimset(ViObjFileset):
 
 
 class ViObjCell(ViObj):
-    def __init__(self, tcl_popen: TclProcessPopen, name: str):
+    def __init__(self, tcl_popen, name: str):
         super().__init__(tcl_popen, f"get_cells", name)
 
     def get_type(self):
@@ -221,41 +220,41 @@ class ViObjCell(ViObj):
 
 
 class ViObjBel(ViObj):
-    def __init__(self, tcl_popen: TclProcessPopen, name: str):
+    def __init__(self, tcl_popen, name: str):
         super().__init__(tcl_popen, f"get_bels", name)
 
 
 class ViObjSite(ViObj):
-    def __init__(self, tcl_popen: TclProcessPopen, name: str):
+    def __init__(self, tcl_popen, name: str):
         super().__init__(tcl_popen, f"get_sites", name)
 
 
 class ViObjTile(ViObj):
-    def __init__(self, tcl_popen: TclProcessPopen, name: str):
+    def __init__(self, tcl_popen, name: str):
         super().__init__(tcl_popen, f"get_tiles", name)
 
 
 class ViObjPin(ViObj):
-    def __init__(self, tcl_popen: TclProcessPopen, name: str):
+    def __init__(self, tcl_popen, name: str):
         super().__init__(tcl_popen, f"get_pins", name)
 
 
 class ViObjPort(ViObj):
-    def __init__(self, tcl_popen: TclProcessPopen, name: str):
+    def __init__(self, tcl_popen, name: str):
         super().__init__(tcl_popen, "get_ports", name)
 
 
 class ViObjHWServer(ViObj):
-    def __init__(self, tcl_popen: TclProcessPopen, name: str):
+    def __init__(self, tcl_popen, name: str):
         super().__init__(tcl_popen, "get_hw_server", name)
         self.ip, self.port = name.split(":")
 
 
 class ViObjHWDevice(ViObj):
-    def __init__(self, tcl_popen: TclProcessPopen, name: str):
+    def __init__(self, tcl_popen, name: str):
         super().__init__(tcl_popen, "get_hw_device", name)
 
 
 class ViObjHWTarget(ViObj):
-    def __init__(self, tcl_popen: TclProcessPopen, name: str):
+    def __init__(self, tcl_popen, name: str):
         super().__init__(tcl_popen, "get_hw_target", name)

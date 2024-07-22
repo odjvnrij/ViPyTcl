@@ -1,7 +1,8 @@
 import multiprocessing
 import os
+import re
 
-from .global_var import DefaultVivadoBatPath
+from .remote_tcl import RemoteTclProcessPopen
 from ..base import *
 from .tcl_process import *
 
@@ -21,6 +22,16 @@ def find_vivado_bat() -> str:
     return ""
 
 
+def addr_parser(addr: str) -> Tuple[str, int]:
+    match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', addr)
+    if not match:
+        raise ValueError("wrong addr: addr must be like '127.0.0.1:12345'")
+    else:
+        ip = match.group(1)  # 获取IP地址
+        port = match.group(2)  # 获取端口号
+    return ip, port
+
+
 def _runs_exist_check(func):
     def inner(*args, **kwargs):
         run_name = args[1]
@@ -33,29 +44,39 @@ def _runs_exist_check(func):
 
 class VivadoPrj:
     def __init__(self,
-                 prj_path: str,
+                 prj_path: str = "",
                  bat_path: str = "",
                  output: bool = True,
                  error_check: bool = True,
+                 server_addr: str or tuple = "",
+                 delay_open: bool = True,
                  max_core: int = multiprocessing.cpu_count(), **kwargs):
 
         self.prj_path = prj_path
-        if not self.prj_path.endswith(".xpr"):
-            raise FileNotFoundError(f"prj path {prj_path} must end with .xpr")
-        if not os.path.exists(prj_path):
-            raise FileNotFoundError(f"prj path not exist {prj_path}")
-
         self.bat_path = bat_path if bat_path else DefaultVivadoBatPath
 
-        self._tcl_proc = TclProcessPopen(self.bat_path, output=output, error_check=error_check, **kwargs)
+        if self.prj_path and not os.path.isfile(prj_path):
+            raise FileNotFoundError(f"prj path not exist {prj_path}")
+
         self._is_exit = False
+        self._is_remote = False
+        self._max_core = max_core
+        self.server_addr = ()
 
-        if max_core > multiprocessing.cpu_count():
-            self._max_core = multiprocessing.cpu_count()
+        if server_addr:
+            if isinstance(server_addr, (tuple, list)):
+                self.server_addr = server_addr[0:2]
+            else:
+                self.server_addr = addr_parser(server_addr)
+
+        if self.server_addr:
+            self._tcl_proc = RemoteTclProcessPopen(*self.server_addr)
+            self._is_remote = True
         else:
-            self._max_core = max_core
+            self._tcl_proc = TclProcessPopen(self.bat_path, output=output, error_check=error_check, **kwargs)
 
-        self.tcl("open_project " + self.prj_path.replace("\\", "/"))
+        if not delay_open:
+            self.tcl("open_project " + self.prj_path.replace("\\", "/"))
 
     def exit(self):
         self.tcl("exit")
@@ -70,6 +91,12 @@ class VivadoPrj:
     def tcls(self, *tcl_cmds):
         tcl_cmd = "\n".join(tcl_cmds)
         return self.tcl(tcl_cmd)
+
+    def grpc_get_file(self, src: str, dst: str = "") -> Union[str, Path]:
+        return self._tcl_proc.grpc_get_file(src, dst)
+
+    def grpc_put_file(self, src: str, dst: str = "") -> Union[str, Path]:
+        return self._tcl_proc.grpc_put_file(src, dst)
 
     def save_log(self, path: str):
         if not self._is_exit:
@@ -87,6 +114,13 @@ class VivadoPrj:
             raise FileNotFoundError(f"tcl script dont exist {tcl_path}")
 
         self.tcl(f"source {tcl_path}")
+
+    def open_prj(self, prj_path: str):
+        prj_path = prj_path.replace("\\", "/")
+        if not os.path.isfile(prj_path):
+            raise FileNotFoundError(f"vivado prj dont exist {prj_path}")
+
+        self.tcl(f"open_project {prj_path}")
 
     def save_prj(self):
         self.tcl("save_project")
@@ -571,16 +605,18 @@ class VivadoPrj:
         if self.current_design().get_design_type() is not RunsType.IMPL:
             raise ViNotInRightDesign("write bitstream must be in impl design")
 
-        os.makedirs(bit_path, exist_ok=True)
-        bit_path = bit_path.replace("\\", "/")
+        if bit_path.endswith(".bit"):
+            bit_path = bit_path.replace("\\", "/")
+            os.makedirs(os.path.basename(bit_path), exist_ok=True)
+        else:
+            raise ViFileErrro("bit_path must end with suffix '.bit'")
+
         tcl = f"write_bitstream -force {bit_path}" if force else f"write_bitstream {bit_path}"
-        return self.tcl(tcl)
+        output = self.tcl(tcl)
+        return output
 
     def program_bits(self, bit_path: str) -> List[str]:
-        if not os.path.exists(bit_path):
-            raise FileNotFoundError(f"bit file not found: {bit_path}")
-
-        bit_path = bit_path.replace("\\", "/")
+        bit_path = self._tcl_proc.prepare_put_file(bit_path)
         return self.tcls("open_hw_manager",
                          "connect_hw_server",
                          "open_hw_target",

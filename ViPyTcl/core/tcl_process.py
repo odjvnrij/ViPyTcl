@@ -1,26 +1,34 @@
-import os
-import re
+import logging
 import shutil
 import subprocess
 import threading
+from pathlib import Path
+from typing import Union
+from datetime import datetime, timedelta
 import traceback
 
 from .global_var import *
-from .vivado_error import get_err_from_str
+from ViPyTcl.base.vivado_error import get_err_from_str
 
 DontDoPutsCmd = {"puts", "for", "foreach", "while", "source"}
+
+logger = logging.getLogger("ViPyTcl")
+
+r"""
+tcl 运行时的默认路径
+C:\Users\XXX\AppData\Roaming\Xilinx\Vivado
+"""
 
 
 class BaseTclProcess:
     def __init__(self):
-        self._is_recv = False
-        self._is_cur_out = False
+        self._is_recv = False  # 几个线程的break位
+        self._is_cur_out = False  # tcl端当前命令是否完成执行完毕
         self._is_terminate = False
-        self._cur_cmd = None  # type: str or None
-        self._cur_out = []
-        self._cur_err = None
-        self._error_check = True
-        self._timeout = None
+        self._cur_cmd = None  # type: str or None   # 当前执行的命令
+        self._cur_out = []  # tcl端output
+        self._cur_err = None  # tcl端err
+        self._error_check = True  # 是否对tcl端output做err检查
         self._cur_cmd_done = threading.Event()
         self._lock = threading.Lock()
 
@@ -30,15 +38,15 @@ class BaseTclProcess:
         self._escape = ()
 
     def terminate(self):
-        raise NotImplemented
+        self._is_terminate = True
 
     close = terminate
 
     def open(self):
-        raise NotImplemented
+        self._is_recv = True
 
     def _recv_th(self):
-        raise NotImplemented
+        raise NotImplementedError
 
     def _escape_tcl(self, s: str) -> str:
         """
@@ -50,8 +58,14 @@ class BaseTclProcess:
             s = s.replace(esc, f"\\{esc}")
         return s
 
-    def _send_cmd(self, tcl: str, raw: bool = False):
-        raise NotImplemented
+    def grpc_put_file(self, src_path, dst_path: str = "", timeout: int = 0) -> Union[str, Path]:
+        raise NotImplementedError
+
+    def grpc_get_file(self, src_path, dst_path: str = "", timeout: int = 0) -> Union[str, Path]:
+        raise NotImplementedError
+
+    def _send_cmd(self, tcl: str, raw: bool = False, timeout: int = None):
+        raise NotImplementedError
 
     def run(self, tcl, raw: bool = False, timeout: int = None) -> list:
         """
@@ -67,29 +81,23 @@ class BaseTclProcess:
         if self._is_terminate:
             raise ValueError("Tcl process has terminate")
 
+        self._lock.acquire()
+
         tcl = tcl.strip(" ").strip("\n")
         if not tcl:
             raise ValueError("tcl can't be empty")
 
-        self._lock.acquire()
-        self._send_cmd(tcl, raw=raw)
-
-        timeout = timeout if timeout else None
-        in_time = self._cur_cmd_done.wait(timeout)
-        output, self._cur_out = self._cur_out, []
+        output = self._send_cmd(tcl, raw=raw, timeout=timeout)
 
         if self._error_check:
             for out in output:
                 if out.startswith("ERROR"):
                     self._cur_err = get_err_from_str(out)
 
-        self._lock.release()
-
-        if not in_time:
-            raise TimeoutError(f"tcl command timeout: {tcl}")
-
         if self._cur_err:
             raise self._cur_err
+
+        self._lock.release()
 
         return output
 
@@ -145,16 +153,50 @@ class TclProcessPopen(subprocess.Popen, BaseTclProcess):
             self._err_th_obj = threading.Thread(target=self._err_th, daemon=True)
             self._err_th_obj.start()
 
-    def clean_vivado_cache(self) -> None:
+    def clean_vivado_cache(self, expire_days: int = 15) -> None:
         """
         清理vivado运行的缓存文件
         :return:
         """
+        logger.info("start vivado cache .Xil clean")
+        file, folder = 0, 0
+
         for f in os.scandir(self._cache):
-            if re.findall(r"vivado[_\d]*\.(backup\.)?\.(jou|jou)", f.name) and f.is_file():
+            if re.findall(r"(vivado|webtalk)[_\d]*\.(backup\.)?\.(jou|jou)", f.name) and f.is_file():
                 os.remove(f.path)
-            elif f.name == ".Xil" and f.is_dir():
-                shutil.rmtree(f.path)
+                file += 1
+
+        Xil = os.path.join(self._cache, ".Xil")
+        if not os.path.isdir(Xil):
+            return
+
+        current_time = datetime.now()
+        expire_time = current_time - timedelta(days=expire_days)
+
+        for dirpath, dirnames, filenames in os.walk(Xil, topdown=False):
+            for file_name in filenames:
+                file_path = os.path.join(dirpath, file_name)
+                mtime = datetime.fromtimestamp(os.path.getmtime(file_path))
+                if mtime < expire_time:
+                    os.remove(file_path)
+                    file += 1
+
+            for dirname in dirnames:
+                directory_path = os.path.join(dirpath, dirname)
+                try:
+                    creation_time = datetime.fromtimestamp(os.path.getctime(directory_path))
+                except OSError:
+                    creation_time = datetime.min
+
+                if creation_time < expire_time:
+                    try:
+                        shutil.rmtree(directory_path)
+                        folder += 1
+                        logger.info(f"Removed old directory: {directory_path}")
+                    except OSError as e:
+                        logger.error(f"Error deleting {directory_path}: {e}")
+
+        logger.info(f"vivado cache clean done, file: {file}, dir: {folder}")
 
     def save_log(self, path: str) -> str:
         """
@@ -186,7 +228,7 @@ class TclProcessPopen(subprocess.Popen, BaseTclProcess):
         :return:
         """
         self._is_recv = False
-        self._is_terminate = True
+        BaseTclProcess.terminate(self)
         super().communicate()
         super().terminate()
 
@@ -257,7 +299,7 @@ class TclProcessPopen(subprocess.Popen, BaseTclProcess):
             print("OSError", tcl)
             raise e
 
-    def _send_cmd(self, tcl: str, raw: bool = False, **kwargs) -> None:
+    def _send_cmd(self, tcl: str, raw: bool = False, timeout: int = None) -> list:
         """
         发送tcl语句
         注：
@@ -268,8 +310,10 @@ class TclProcessPopen(subprocess.Popen, BaseTclProcess):
         :param raw: 是否优化输出
             True: 绝对不添加 puts 优化输出
             False: 添加 puts 优化输出
-        :return:
+        :param timeout: 单命令运行timeout，sec
+        :return: bool
         """
+        timeout = int(timeout) if timeout else None
         tcl_type = tcl.split()[0]
 
         self._cur_cmd_done.clear()
@@ -284,3 +328,9 @@ class TclProcessPopen(subprocess.Popen, BaseTclProcess):
             self._write_2_stdin(f'puts [{tcl}]')
 
         self._write_2_stdin(f'puts "\[Tcl end\]"')
+        in_time = self._cur_cmd_done.wait(timeout)
+        if not in_time:
+            raise TimeoutError(f"tcl command timeout: {tcl}")
+
+        output, self._cur_out = self._cur_out, []
+        return output

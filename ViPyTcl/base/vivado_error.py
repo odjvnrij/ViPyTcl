@@ -36,6 +36,10 @@ class ViUnexit(ViError):
     pass
 
 
+class ViFileErrro(ViError):
+    pass
+
+
 class ViRunNotExist(ViError):
     pass
 

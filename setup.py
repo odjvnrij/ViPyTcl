@@ -9,10 +9,13 @@ VERSION = (here / "VERSION").read_text(encoding="utf-8").strip()
 excluded_packages = ["docs", "tests", "tests.*"]
 packages = ['ViPyTcl']
 
+with open('requirements.txt') as f:
+    requires = f.readlines()
+
 setup(
     name="ViPyTcl",
     version=VERSION,
-    description="pyvtcl is a python wrapper for vivado tcl process, you can run tcl cmd directly in python though string and get the result.",
+    description="ViPyTcl is a python wrapper for vivado tcl process, you can run tcl cmd directly in python though string and get the result.",
     long_description=README,
     author="odjvnrij",
     author_email="odjvnrij72@outlook.com",
@@ -24,5 +27,6 @@ setup(
     license="APACHE LICENSE, VERSION 2.0",
     packages=find_packages(where='.', exclude=(), include=('*',)),
     python_requires=">=3.8",
-    install_requires=[],
+    install_requires=requires,
 )
+

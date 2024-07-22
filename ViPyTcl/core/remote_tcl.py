@@ -1,306 +1,354 @@
 import logging
-import subprocess
-import threading
+import os
+import sys
+import time
 import traceback
-import socket
-import queue
+from concurrent import futures
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Tuple, Union
 
-from ..base.msg import *
-from .tcl_process import TclProcessPopen, DontDoPutsCmd, BaseTclProcess
-from . import tools
+import apscheduler.schedulers.background
+import grpc
 
-logger = logging.getLogger()
+from . import remote_tcl_pb2
+from .remote_tcl_pb2_grpc import RemoteTclServicer, RemoteTclStub, RemoteTcl, add_RemoteTclServicer_to_server
+from ViPyTcl.base.remote_base import *
+from ViPyTcl.core.tcl_process import TclProcessPopen, BaseTclProcess
+
+logger = logging.getLogger("ViPyTcl")
 
 
-class RemoteTclServer(TclProcessPopen):
-    def __init__(self,
-                 ip: str,
-                 port: int,
-                 vivado_bat_path: str = "", timeout: int = 10, max_client: int = 5,
-                 *args, output=False, save_log: str = "", clean=True, error_check=True,
-                 encode="GBK",
-                 escape=(), shell=True, output_stdout=False,
-                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                 stderr=subprocess.PIPE,
-                 **kwargs):
-        self.ip = ip
-        self.port = int(port)
-        self.addr = (self.ip, self.port)
-        self._max_client = max_client
-        self._timeout = timeout
-        self._is_open = False
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
-        self._socket.bind(self.addr)
-        self._socket.listen(self._max_client)
-        self._socket.settimeout(self._timeout)
-        self._client = {}
-        self._exec_th = None
-        self._listen_th = None
-        self._msg_queue = queue.Queue(1024)
+def ipv4_parser(ip_str: str) -> Tuple[str, int]:
+    """
+    将grpc中的ip_str: "ipv4:127.0.0.1:8440" 的ip和port信息解析出来
+    :param ip_str:
+    :return:
+    """
+    _ = ip_str.split(":")
+    return _[1], int(_[2])
 
-        super().__init__(
-            vivado_bat_path=vivado_bat_path,
-            output=output,
-            save_log=save_log,
-            clean=clean,
-            error_check=error_check,
-            encode=encode,
-            escape=escape, shell=shell, output_stdout=output_stdout,
-            stdin=stdin,
-            stdout=stdout,
-            stderr=stderr,
-            delay=True,
-            *args,
-            **kwargs
-        )
 
-    def open(self):
-        super().open()
-        self._is_open = True
-        self._listen_th = threading.Thread(target=self._tcp_listen)
-        self._exec_th = threading.Thread(target=self._exec)
-        self._listen_th.start()
-        self._exec_th.start()
+class GRPCServer:
+    def __init__(self):
+        self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        self._aps = apscheduler.schedulers.background.BackgroundScheduler(timezone='Asia/Shanghai')
+        self._stop_callback = {}
 
-    def _exec(self):
-        logger.info(f"tcl exec thread on")
-        while self._is_open:
-            try:
-                cmd_req = self._msg_queue.get(block=True, timeout=self._timeout)  # type: CmdReqMsg
+    def add_aps_job(self, *args, **kwargs):
+        self._aps.add_job(*args, **kwargs)
 
-                cmd = cmd_req.cmd.decode()
+    def add_servicer(self, add_servicer_func, servicer):
+        add_servicer_func(servicer, self._server)
 
-                logger.info(f"Queue {cmd_req.addr} -> exec: {cmd_req.cmd}")
-                output = self.run(cmd, timeout=cmd_req.timeout)
-                logger.debug(f"exec {cmd}, result: {output}")
+    def add_insecure_port(self, ip: str, port: int):
+        self._server.add_insecure_port(f'{ip}:{int(port)}')
 
-                conn = self._client.get(cmd_req.addr, None)  # type: socket.socket
-                if conn is None:
-                    logger.warning(f"client disconnected when try to resp, addr: {cmd_req.addr}")
-                    continue
+    def add_stop_callback(self, func, args: tuple = (), kwargs: dict = None):
+        kwargs = kwargs if kwargs else {}
+        self._stop_callback[func] = (args, kwargs)
 
-                output = "\n".join(output) if output else ""
+    def start(self):
+        self._aps.start()
+        self._server.start()
 
-                resp_msg = CmdRespMsg.from_req(cmd_req, output)
+    def stop(self):
+        for func, _ in self._stop_callback.items():
+            func(*_[0], **_[1])
 
-                logger.debug(f"send resp: {output}, {tools.format_bytes(resp_msg.get_bytes())}")
-                conn.sendall(resp_msg.get_bytes())
+        self._aps.shutdown()
+        self._server.stop(0)
 
-            except queue.Empty:
 
-                if self._is_open:
-                    continue
-                else:
-                    logger.info("stop run, tcl exec thread quit")
-                    break
+class GRPCRemoteTclServicer(RemoteTclServicer):
+    def __init__(self, *args, **kwargs):
+        self._tcl_proc = TclProcessPopen(*args, error_check=False, **kwargs)  # type: TclProcessPopen or None
+        self._cache = Path(".cache")
+        self._cache.mkdir(exist_ok=True)
 
-            except Exception as err:
-                logger.error("tcl exec thread error")
-                logger.error(traceback.format_exc())
-                continue
+    def clean_file_cache(self, expire_days: int = 15):
+        if not self._cache.is_dir():
+            return
+        logger.info("APS start file cache clean")
+        file, folder = 0, 0
+        current_time = datetime.now()
+        expire = current_time - timedelta(days=expire_days)
 
-    def _tcp_listen(self):
-        logger.info(f"tcp listen thread on")
-        while self._is_open:
-            try:
-                conn, addr = self._socket.accept()
-            except socket.timeout as e:
-                if self._is_open:
-                    continue
-                else:
-                    logger.info("stop run, tcp listen thread quit")
-                    break
+        try:
+            # 遍历当前目录下的所有文件和子目录
+            for root, dirs, files in os.walk(self._cache, topdown=False):
+                for file_name in files:
+                    file_path = os.path.join(root, file_name)
+                    # 获取文件的修改时间
+                    mtime = datetime.fromtimestamp(os.path.getmtime(file_path))
+                    # 如果文件修改时间早于30天前，删除文件
+                    if mtime < expire:
+                        os.remove(file_path)
+                        file += 1
 
-            self._client[addr] = conn
-            logger.info(f"tcp conn established: {addr}")
-            hdlr = threading.Thread(target=self._tcp_recv, args=(conn, addr), daemon=False)
-            hdlr.start()
+                for dir_name in dirs:
+                    dir_path = os.path.join(root, dir_name)
+                    # 如果子目录下没有文件，删除该子目录
+                    if not os.listdir(dir_path):
+                        os.rmdir(dir_path)
+                        folder += 1
 
-    def _tcp_recv(self, conn: socket.socket, addr: tuple):
-        logger.info(f"tcp recv thread on {addr}")
-        while self._is_open:
-            try:
-                recv_data = conn.recv(16)
-                logger.debug(f"get len: {len(recv_data)}, bytes: {tools.format_bytes(recv_data)}")
-                if len(recv_data) != 16 or int.from_bytes(recv_data[0:4], "big") != 1414812756:
-                    print(int.from_bytes(recv_data[0:4], "big") != 0x1414812756, int.from_bytes(recv_data[0:4], "big"))
-                    continue
+        except OSError as e:
+            logger.error(f"Error: {e}")
 
-                msg_len = int.from_bytes(recv_data[4:8], "big")
-                msg_type = int.from_bytes(recv_data[8:10], "big")
-                big_ver = recv_data[10]
-                little_ver = recv_data[11]
-                res = recv_data[12:16]
-                logger.debug(f"get header: {tools.format_bytes(recv_data)}, len:{msg_len}, type:{msg_type}")
+        logger.info(f"file cache clean done, file: {file}, dir: {folder}")
 
-                if msg_len - 16 < 0:
-                    logger.debug(f"tcp recv invalid msg len: {msg_len}")
-                    continue
+    def clean_vivado_cache(self):
+        return self._tcl_proc.clean_vivado_cache()
 
-                try:
-                    tcp_msg_type = TclMsgType(msg_type)
-                except ValueError:
-                    logger.debug(f"tcp recv invalid msg type: {msg_type}")
-                    continue
+    def stop(self):
+        self._tcl_proc.terminate()
 
-                if tcp_msg_type is TclMsgType.CmdReq:
-                    req_cmd = conn.recv(msg_len - 16)
-                    timeout = int.from_bytes(req_cmd[0:3], "big")
-                    stat = req_cmd[3]
+    def tcl(self, request, context):
+        logger.info(
+            f"tcl request from {ipv4_parser(context.peer())}: '{request.cmd}', raw: {request.raw}, timeout: {request.timeout}")
 
-                    if msg_len > 20:
-                        cmd = req_cmd[4:].decode()
-                    else:
-                        cmd = ""
+        try:
+            output = self._tcl_proc.run(request.cmd, timeout=request.timeout, raw=request.raw)
+            output = "\n".join(output)
+            stat = MsgStat.Done
+            err = 0
+            err_info = ""
 
-                    req_msg = CmdReqMsg(addr, cmd=cmd, stat=stat, timeout=timeout)
-                    self._msg_queue.put(req_msg, block=True)
+            resp = ("-" * 20 + "\n" + output + "\n" + "-" * 20) if output else ("-" * 20 + "\n" + "-" * 20)
+            logger.debug(
+                f"tcl resp to {ipv4_parser(context.peer())}: \n{resp}")
 
-                    logger.debug(
-                        f"tcp {req_msg.addr} -> Queue, type:{req_msg.msg_type.name}, len:{req_msg.cmd_len}, cmd: {cmd}")
-                else:
-                    continue
+        except TimeoutError as err:
+            err_info = f"tcl exec timeout {request.timeout}: '{request.cmd}'"
+            logger.error(err_info)
+            stat = MsgStat.Timeout
+            err = GRPCErrCode.TclRunTimeoutErr
+            output = ""
 
-            except ConnectionResetError as err:
-                logger.info(f"tcp conn disconnect: {conn.getpeername()}")
-                break
+        except Exception as err:
+            logger.error(
+                f"tcl exec failed: '{request.cmd}'"
+            )
+            stat = MsgStat.Fail
+            err = GRPCErrCode.UnknownErr
+            err_info = traceback.format_exc()
+            output = ""
+            logger.error(err_info)
 
-            except socket.timeout:
-                if self._is_open:
-                    continue
-                else:
-                    logger.info("stop run, tcp recv thread quit")
-                    break
+        return remote_tcl_pb2.TclResponse(cmd=request.cmd, output=output, raw=request.raw, timeout=request.timeout,
+                                          common=remote_tcl_pb2.Common(stat=stat, err=err, err_info=err_info))
 
-            except Exception as err:
-                logger.error("tcp recv thread error")
-                logger.error(traceback.format_exc())
-                raise err
+    def put_file(self, request, context):
+        addr = ipv4_parser(context.peer())
+        logger.debug(
+            f"put file request from {addr}: size: {request.size}, {request.src_path} -> {request.dst_path}, ")
+        src = Path(request.src_path)
+        dst = Path(request.dst_path)
 
-        conn.close()
+        try:
+            if dst.is_absolute():
+                if not dst.parent.exists():
+                    raise FileNotFoundError
+
+                elif dst.is_dir():
+                    dst = dst / src.name
+
+            else:
+                dst = self._cache / "-".join(addr) / dst
+                if dst.is_dir():
+                    dst = dst / src.name
+                os.makedirs(dst.parent, exist_ok=True)
+
+            dst = dst.absolute()
+            with open(dst, "wb") as f:
+                f.write(request.content)
+            size = os.path.getsize(dst)
+
+            stat = MsgStat.Done
+            err = 0
+            err_info = ""
+            logger.debug(f"put file req from {ipv4_parser(context.peer())}: {src} -> {dst}, size: {size}")
+
+        except FileNotFoundError as err:
+            logger.error(
+                f"put file failed, file not found: {request.src_path} -> {request.dst_path}"
+            )
+            size = 0
+            stat = MsgStat.Fail
+            err = GRPCErrCode.FileNotFoundErr
+            err_info = traceback.format_exc()
+            logger.error(err_info)
+
+        except Exception as err:
+            logger.error(
+                f"put file failed: {request.src_path} -> {request.dst_path}"
+            )
+            size = 0
+            stat = MsgStat.Fail
+            err = GRPCErrCode.UnknownErr
+            err_info = traceback.format_exc()
+            logger.error(err_info)
+
+        logger.debug(
+            f"put file resp from {ipv4_parser(context.peer())}: {src} <- {dst}, size: {size}")
+        return remote_tcl_pb2.PutFileResponse(src_path=request.src_path,
+                                              dst_path=str(dst),
+                                              size=size,
+                                              common=remote_tcl_pb2.Common(stat=stat, err=err, err_info=err_info))
+
+    def get_file(self, request, context):
+        addr = ipv4_parser(context.peer())
+        logger.debug(
+            f"get file request from {addr}: {request.dst_path} <- {request.src_path}, ")
+        src = Path(request.src_path)
+
+        try:
+            if src.is_absolute() and not src.is_file():
+                raise FileNotFoundError
+            else:
+                src = self._cache / "-".join(addr) / src
+                if not os.path.isfile(src):
+                    raise FileNotFoundError
+
+            with open(src, "rb") as f:
+                file_bytes = f.read()
+                file_bytes_len = len(file_bytes)
+
+            src = src.absolute()
+            stat = MsgStat.Done
+            err = 0
+            err_info = ""
+            logger.debug(
+                f"get file req from {ipv4_parser(context.peer())}: {request.dst_path} <- {src}, size: {file_bytes_len}")
+
+        except FileNotFoundError as err:
+            logger.error(
+                f"put file failed, file not found: {request.src_path} -> {request.dst_path}"
+            )
+            file_bytes = b""
+            file_bytes_len = 0
+            stat = MsgStat.Fail
+            err = GRPCErrCode.FileNotFoundErr
+            err_info = traceback.format_exc()
+            logger.error(err_info)
+
+        except Exception as err:
+            logger.error(
+                f"get file failed: {request.dst_path} <- {request.src_path}"
+            )
+            file_bytes = b""
+            file_bytes_len = 0
+            stat = MsgStat.Fail
+            err = GRPCErrCode.UnknownErr
+            err_info = traceback.format_exc()
+            logger.error(err_info)
+
+        logger.debug(f"resp get file, {request.dst_path} <- {request.src_path}", )
+        return remote_tcl_pb2.GetFileResponse(
+            src_path=str(src),
+            dst_path=request.dst_path,
+            size=file_bytes_len, content=file_bytes,
+            common=remote_tcl_pb2.Common(stat=stat, err=err, err_info=err_info))
 
 
 class RemoteTclProcessPopen(BaseTclProcess):
-    def __init__(self, server_ip: str, server_port: int, timeout: int = 5, *args, **kwargs):
+    def __init__(self, ip: str, port: int):
         super().__init__()
-        self.server_ip = server_ip
-        self.server_port = int(server_port)
-        self.server_addr = (self.server_ip, self.server_port)
-        self._timeout = int(timeout) if timeout else 5
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._is_open = False
-        self._recv_th = None
-        self._resp_event = threading.Event()
+        self.server_ip = ip
+        self.server_port = int(port)
 
-    @property
-    def is_open(self) -> bool:
-        return self._is_open
+        self._is_recv = False
+        self._channel = grpc.insecure_channel(f"{self.server_ip}:{self.server_port}")
+        self._client = None
 
-    @property
-    def timeout(self):
-        return self._timeout
-
-    @timeout.setter
-    def timeout(self, timeout: int):
-        self._timeout = int(timeout)
-        if self._socket:
-            self._socket.settimeout(self._timeout)
+    @staticmethod
+    def _check_grpc_resp_err(response):
+        if response.common.err:
+            err = GRPCErrCode2Err.get(response.common.err)
+            err_info = response.common.err_info
+            raise err(err_info)
 
     def open(self):
-        self._socket.connect(self.server_addr)
-        self._socket.settimeout(self.timeout)
-        self._is_open = True
+        super().open()
+        self._channel.__enter__()
+        self._client = RemoteTclStub(channel=self._channel)
 
-        self._recv_th = threading.Thread(target=self._recv)
-        self._recv_th.start()
+    def terminate(self):
+        super().terminate()
+        self._channel.__exit__()
 
-    def _send_cmd(self, tcl: str, raw: bool = False) -> None:
-        tcl_type = tcl.split()[0]
+    def _send_cmd(self, tcl: str, raw: bool = False, timeout: int = 0):
+        timeout = int(timeout) if timeout else 0
 
-        self._cur_cmd_done.clear()
-        self._cur_cmd = tcl
-        escape_tcl = self._escape_tcl(self._cur_cmd)
+        req = remote_tcl_pb2.TclRequest(cmd=tcl, raw=bool(raw), timeout=timeout,
+                                        common=remote_tcl_pb2.Common(stat=MsgStat.Receive))
+        response = self._client.tcl(req)
+        self._check_grpc_resp_err(response)
 
-        cmd = f'puts "\[Tcl run\] {escape_tcl}"\n'
-
-        if raw or (tcl_type in DontDoPutsCmd):
-            cmd += f"{tcl}\n"
+        if response.output:
+            output = response.output.split("\n")
         else:
-            cmd += f'puts [{tcl}]\n'
+            output = []
+        logger.info("run tcl: ", tcl)
+        return output
 
-        cmd += f'puts "\[Tcl end\]"'
+    def grpc_put_file(self, src_path, dst_path: str = "", timeout: int = 0) -> Union[str, Path]:
+        """ 将本机src_path文件发送到远端dst_path文件 """
+        start = time.time()
+        logger.info(f"request put file {src_path} -> {dst_path}")
+        if not os.path.isfile(src_path):
+            raise FileNotFoundError
 
-        cmd_req = CmdReqMsg(self.server_addr, tcl, timeout=self._timeout)
+        with open(src_path, "rb") as f:
+            file_bytes = f.read()
+        file_bytes_len = len(file_bytes)
 
-        logger.debug(f"tcl send cmd: {cmd}")
-        b = cmd_req.get_bytes()
-        self._socket.sendall(b)
-        logger.debug(f"send bytes len{len(b)}: {tools.format_bytes(b)}")
+        response = self._client.put_file(
+            remote_tcl_pb2.PutFileRequest(src_path=src_path,
+                                          dst_path=dst_path,
+                                          size=file_bytes_len,
+                                          content=file_bytes,
+                                          common=remote_tcl_pb2.Common(stat=MsgStat.Receive)))
+        self._check_grpc_resp_err(response)
+        time_usage = time.time() - start
+        logger.info(
+            f"response put file {src_path} -> {dst_path}, file_size: {file_bytes_len}, send_size: {response.size}, time_usage: {time_usage:.2f} s, speed: {file_bytes_len / time_usage / 1024:.2f} KB/s")
+        return response.dst_path
 
-    def _recv(self):
-        logger.debug(f"tcp recv thread on {self.server_addr}")
-        while True:
-            try:
-                recv_data = self._socket.recv(16)
-                if len(recv_data) != 16 or int.from_bytes(recv_data[0:4], "big") != 1414812756:
-                    continue
+    def grpc_get_file(self, src_path, dst_path: str = "", timeout: int = 0) -> Union[str, Path]:
+        """ 将远端src_path文件发送到本机dst_path文件 """
+        start = time.time()
+        logger.info(f"request get file {dst_path} <- {src_path}")
+        response = self._client.get_file(
+            remote_tcl_pb2.GetFileRequest(src_path=src_path,
+                                          dst_path=dst_path,
+                                          common=remote_tcl_pb2.Common(stat=MsgStat.Receive)))
+        self._check_grpc_resp_err(response)
 
-                msg_len = int.from_bytes(recv_data[4:8], "big")
-                msg_type = int.from_bytes(recv_data[8:10], "big")
-                big_ver = recv_data[10]
-                little_ver = recv_data[11]
-                res = recv_data[12:16]
+        dst_path = Path(dst_path)
+        src_path = Path(src_path)
 
-                logger.debug(f"get header: {tools.format_bytes(recv_data)}, len:{msg_len}, type:{msg_type}")
+        if dst_path.is_absolute():
+            if not dst_path.parent.exists():
+                raise FileNotFoundError
 
-                if msg_len - 16 < 0:
-                    logger.debug(f"tcp recv invalid msg len: {msg_len}")
-                    continue
+            elif dst_path.is_dir():
+                dst_path = dst_path / src_path.name
 
-                try:
-                    msg_type = TclMsgType(msg_type)
-                except ValueError:
-                    logger.debug(f"tcp recv invalid msg type: {msg_type}")
-                    continue
+        else:
+            if dst_path.is_dir():
+                dst_path = dst_path / src_path.name
+            os.makedirs(dst_path.parent, exist_ok=True)
 
-                if msg_type is TclMsgType.CmdResp:
-                    req_cmd = self._socket.recv(msg_len - 16)
-                    timeout = int.from_bytes(req_cmd[0:3], "big")
-                    stat = req_cmd[3]
+        dst_path = dst_path.absolute()
+        with open(dst_path, "wb") as f:
+            f.write(response.content)
+        file_bytes_len = os.path.getsize(dst_path)
+        if file_bytes_len != response.size:
+            logger.warning(f"get file size dont match, file_size: {file_bytes_len}, recv_size: {response.size}")
 
-                    if msg_len > 20:
-                        result = req_cmd[4:].decode()
-                    else:
-                        result = ""
-
-                    if result:
-                        self._cur_out = result.split("\n")
-                    else:
-                        self._cur_out = []
-
-                    self._cur_cmd_done.set()
-
-                    logger.debug(
-                        f"tcp {self.server_addr} -> this, type:{msg_type}, len:{msg_len}, cmd: {self._cur_cmd}, result:{result}")
-                else:
-                    continue
-
-            except ConnectionAbortedError:
-                logger.info(f"tcp conn disconnect: {self._socket.getpeername()}")
-                break
-
-            except (socket.timeout, OSError):
-                if self._is_open:
-                    continue
-                else:
-                    break
-
-            except Exception as err:
-                logger.error("tcp recv thread error")
-                logger.error(traceback.format_exc())
-                raise err
-        self._socket.close()
-
-    def run(self, tcl, raw: bool = False, timeout: int = None) -> list:
-        return super().run(tcl, raw, None)
+        time_usage = time.time() - start
+        logger.info(
+            f"request get file {dst_path} <- {src_path}, file_size: {file_bytes_len}, recv_size: {response.size}, time_usage: {time_usage:.2f} s, speed: {file_bytes_len / time_usage / 1024:.2f} KB/s")
+        return dst_path
