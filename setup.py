@@ -19,11 +19,7 @@ setup(
     long_description=README,
     author="odjvnrij",
     author_email="odjvnrij72@outlook.com",
-    url="https://github.com/odjvnrij/VivadoPyTcl",
-    project_urls={
-        "Bug Tracker": "https://github.com/odjvnrij/faker/issues",
-        "Source Code": "https://github.com/odjvnrij/VivadoPyTcl",
-    },
+    url="https://github.com/odjvnrij/ViPyTcl",
     license="APACHE LICENSE, VERSION 2.0",
     packages=find_packages(where='.', exclude=(), include=('*',)),
     python_requires=">=3.8",
