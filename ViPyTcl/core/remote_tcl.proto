@@ -22,15 +22,17 @@ message TclRequest {
     Common  common = 1;
     int32   timeout = 2;
     bool    raw = 3;
-    string  cmd = 4;
+    bool    block = 4;
+    string  cmd = 5;
 }
 
 message TclResponse {
     Common  common = 1;
     int32   timeout = 2;
     bool    raw = 3;
-    string  cmd = 4;
-    string  output = 5;
+    bool    block = 4;
+    string  cmd = 5;
+    string  output = 6;
 }
 
 message PutFileRequest {

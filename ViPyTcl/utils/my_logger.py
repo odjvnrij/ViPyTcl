@@ -13,8 +13,8 @@ today = date.today()
 log_root = "./log"
 random_uuid = str(uuid.uuid4())
 date_str = "-".join((str(today.year), str(today.month), str(today.day)))
-formatter = colorlog.ColoredFormatter(
-    '%(log_color)s[%(levelname)s] [%name%] [%(asctime)s] %(message)s',
+console_formatter = colorlog.ColoredFormatter(
+    '%(log_color)s[%(levelname)s] [%(asctime)s] %(message)s',
     log_colors={
         'DEBUG': 'cyan',
         'INFO': 'green',
@@ -23,12 +23,17 @@ formatter = colorlog.ColoredFormatter(
         'CRITICAL': 'red,bg_white',
     }
 )
+file_formatter = logging.Formatter('[%(levelname)s] [%(asctime)s] %(message)s')
 
 
 def set_log_root(root_path: str):
     global log_root
     log_root = root_path
     os.makedirs(log_root, exist_ok=True)
+
+
+def get_console_logger(level: logging.DEBUG):
+    return get_logger(use_stdout=True, use_file=False, stdout_level=level)
 
 
 def get_logger(logger_name: str = "root",
@@ -56,20 +61,17 @@ def get_logger(logger_name: str = "root",
         os.makedirs(upper_folder_path, exist_ok=True)
         logger_full_path = os.path.join(upper_folder_path, random_uuid)
         file_handler = logging.FileHandler(filename=logger_full_path, mode="w", delay=True)
-        file_handler.setFormatter(formatter)
+        file_handler.setFormatter(file_formatter)
         file_handler.setLevel(file_level)
         logger.addHandler(file_handler)
 
     if use_stdout:
         stream_handler = logging.StreamHandler(sys.stdout)
-        stream_handler.setFormatter(formatter)
+        stream_handler.setFormatter(console_formatter)
         stream_handler.setLevel(stdout_level)
         logger.addHandler(stream_handler)
 
     return logger
-
-
-_logger = get_logger("ViPyTcl", use_stdout=True, use_file=False)
 
 
 class MockLogger:

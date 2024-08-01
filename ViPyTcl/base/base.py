@@ -59,10 +59,10 @@ class ViObj:
     def __call__(self, *args, **kwargs):
         kwargs.update(self._kwargs)
         s = tcl_args_parse(*args, **kwargs)
-        return self._tcl_popen.run("%s {%s} %s" % (self.tcl, self.name, s))
+        return self._tcl_popen.tcl("%s {%s} %s" % (self.tcl, self.name, s))
 
     def is_property_read_only(self, name: str):
-        result = self._tcl_popen.run(f"get_property {self} {{{name}}}")[1:]
+        result = self._tcl_popen.tcl(f"get_property {self} {{{name}}}")[1:]
         if not result:
             return None
 
@@ -74,7 +74,7 @@ class ViObj:
             return None
 
     def get_property_type(self, name: str):
-        result = self._tcl_popen.run(f"get_property {self} {{{name}}}")[1:]
+        result = self._tcl_popen.tcl(f"get_property {self} {{{name}}}")[1:]
         if not result:
             return None
 
@@ -82,7 +82,7 @@ class ViObj:
         return value_type
 
     def get_property(self, name: str):
-        result = self._tcl_popen.run(f"get_property {self} {{{name}}}")[1:]
+        result = self._tcl_popen.tcl(f"get_property {self} {{{name}}}")[1:]
         if not result:
             return ''
 
@@ -111,7 +111,7 @@ class ViObj:
         else:
             tcl = f"set_property -dict " + " ".join(("{%s} {%s}" % (k, v) for k, v in dic.item()))
         tcl += f" {self}"
-        return self._tcl_popen.run(tcl)
+        return self._tcl_popen.tcl(tcl)
 
 
 class ViObjList:
@@ -154,8 +154,8 @@ class ViObjRun(ViObj):
         if "WARNING: [Vivado 12-821]" in result[0]:
             return RunsType.NoneType
 
-        is_synth = int(self._tcl_popen.run(f"get_property IS_SYNTHESIS [{self}]")[0])
-        is_impl = int(self._tcl_popen.run(f"get_property IS_IMPLEMENTATION [{self}]")[0])
+        is_synth = int(self._tcl_popen.tcl(f"get_property IS_SYNTHESIS [{self}]")[0])
+        is_impl = int(self._tcl_popen.tcl(f"get_property IS_IMPLEMENTATION [{self}]")[0])
         if is_synth:
             return RunsType.SYNTH
         elif is_impl:
@@ -176,8 +176,8 @@ class ViObjDesign(ViObj):
         if "WARNING: [Vivado 12-628]" in result[0]:
             return RunsType.NoneType
 
-        is_synth = int(self._tcl_popen.run(f"get_property IS_SYNTHESIS [get_runs {self.name}]")[0])
-        is_impl = int(self._tcl_popen.run(f"get_property IS_IMPLEMENTATION [get_runs {self.name}]")[0])
+        is_synth = int(self._tcl_popen.tcl(f"get_property IS_SYNTHESIS [get_runs {self.name}]")[0])
+        is_impl = int(self._tcl_popen.tcl(f"get_property IS_IMPLEMENTATION [get_runs {self.name}]")[0])
         if is_synth:
             return RunsType.SYNTH
         elif is_impl:

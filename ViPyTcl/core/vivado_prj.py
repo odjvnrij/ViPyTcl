@@ -49,15 +49,17 @@ class VivadoPrj:
                  output: bool = True,
                  error_check: bool = True,
                  server_addr: str or tuple = "",
+                 delay: bool = False,
                  delay_open: bool = True,
                  max_core: int = multiprocessing.cpu_count(), **kwargs):
 
         self.prj_path = prj_path
         self.bat_path = bat_path if bat_path else DefaultVivadoBatPath
 
-        if self.prj_path and not os.path.isfile(prj_path):
+        if self.prj_path and not (os.path.isfile(prj_path) and prj_path.endswith(".xpr")):
             raise FileNotFoundError(f"prj path not exist {prj_path}")
 
+        self._is_open = False
         self._is_exit = False
         self._is_remote = False
         self._max_core = max_core
@@ -70,23 +72,42 @@ class VivadoPrj:
                 self.server_addr = addr_parser(server_addr)
 
         if self.server_addr:
-            self._tcl_proc = RemoteTclProcessPopen(*self.server_addr)
+            self._tcl_proc = RemoteTclProcessPopen(*self.server_addr, delay=delay)
             self._is_remote = True
         else:
-            self._tcl_proc = TclProcessPopen(self.bat_path, output=output, error_check=error_check, **kwargs)
+            self._tcl_proc = TclProcessPopen(self.bat_path, delay=delay, output=output, error_check=error_check,
+                                             **kwargs)
 
-        if not delay_open:
+        if not delay:
+            self.open()
+
+        if not delay_open and self.prj_path:
             self.tcl("open_project " + self.prj_path.replace("\\", "/"))
 
+    def open(self):
+        self._is_open = True
+        self._is_exit = False
+        self._tcl_proc.open()
+
     def exit(self):
-        self.tcl("exit")
+        if not self._is_open:
+            raise RuntimeError("tcl popen in vivado project is not open yet")
+        elif not self._is_remote:
+            self.tcl("exit")
+        else:
+            self.tcl("close_project -q")
+
         self._tcl_proc.terminate()
+        self._is_open = False
         self._is_exit = True
 
     def tcl(self, tcl_cmd: str):
-        if self._is_exit:
+        if not self._is_open:
+            raise RuntimeError("tcl popen is not open")
+        elif self._is_exit:
             raise ViTclCantRunError("vivado is exit, can't run tcl cmd")
-        return self._tcl_proc.run(tcl_cmd)
+
+        return self._tcl_proc.tcl(tcl_cmd)
 
     def tcls(self, *tcl_cmds):
         tcl_cmd = "\n".join(tcl_cmds)
@@ -110,7 +131,7 @@ class VivadoPrj:
 
     def exec_script(self, tcl_path: str):
         tcl_path = tcl_path.replace("\\", "/")
-        if not os.path.exists(tcl_path):
+        if not os.path.isfile(tcl_path):
             raise FileNotFoundError(f"tcl script dont exist {tcl_path}")
 
         self.tcl(f"source {tcl_path}")
@@ -611,18 +632,18 @@ class VivadoPrj:
         else:
             raise ViFileErrro("bit_path must end with suffix '.bit'")
 
-        tcl = f"write_bitstream -force {bit_path}" if force else f"write_bitstream {bit_path}"
+        tcl = f"write_bitstream -force {{{bit_path}}}" if force else f"write_bitstream {{{bit_path}}}"
         output = self.tcl(tcl)
         return output
 
     def program_bits(self, bit_path: str) -> List[str]:
-        bit_path = self._tcl_proc.prepare_put_file(bit_path)
+        bit_path = self._tcl_proc.grpc_put_file(bit_path)
         return self.tcls("open_hw_manager",
                          "connect_hw_server",
                          "open_hw_target",
                          "current_hw_device [lindex [get_hw_devices] 0]",
                          "refresh_hw_device -update_hw_probes false [current_hw_device]",
-                         f"set_property PROGRAM.FILE {bit_path} [current_hw_device]",
+                         f"set_property PROGRAM.FILE {{{bit_path}}} [current_hw_device]",
                          "program_hw_devices [current_hw_device]",
                          "close_hw_manager"
                          )

@@ -3,9 +3,9 @@
 import grpc
 import warnings
 
-from ViPyTcl.core import remote_tcl_pb2 as ViPyTcl_dot_core_dot_remote__tcl__pb2
+from lib.ViPyTcl.core import remote_tcl_pb2 as lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2
 
-GRPC_GENERATED_VERSION = '1.65.1'
+GRPC_GENERATED_VERSION = '1.65.2'
 GRPC_VERSION = grpc.__version__
 EXPECTED_ERROR_RELEASE = '1.66.0'
 SCHEDULED_RELEASE_DATE = 'August 6, 2024'
@@ -20,7 +20,7 @@ except ImportError:
 if _version_not_supported:
     warnings.warn(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in ViPyTcl/core/remote_tcl_pb2_grpc.py depends on'
+        + f' but the generated code in lib/ViPyTcl/core/remote_tcl_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -45,18 +45,18 @@ class RemoteTclStub(object):
         """
         self.tcl = channel.unary_unary(
                 '/remote_tcl.RemoteTcl/tcl',
-                request_serializer=ViPyTcl_dot_core_dot_remote__tcl__pb2.TclRequest.SerializeToString,
-                response_deserializer=ViPyTcl_dot_core_dot_remote__tcl__pb2.TclResponse.FromString,
+                request_serializer=lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.TclRequest.SerializeToString,
+                response_deserializer=lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.TclResponse.FromString,
                 _registered_method=True)
         self.get_file = channel.unary_unary(
                 '/remote_tcl.RemoteTcl/get_file',
-                request_serializer=ViPyTcl_dot_core_dot_remote__tcl__pb2.GetFileRequest.SerializeToString,
-                response_deserializer=ViPyTcl_dot_core_dot_remote__tcl__pb2.GetFileResponse.FromString,
+                request_serializer=lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.GetFileRequest.SerializeToString,
+                response_deserializer=lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.GetFileResponse.FromString,
                 _registered_method=True)
         self.put_file = channel.unary_unary(
                 '/remote_tcl.RemoteTcl/put_file',
-                request_serializer=ViPyTcl_dot_core_dot_remote__tcl__pb2.PutFileRequest.SerializeToString,
-                response_deserializer=ViPyTcl_dot_core_dot_remote__tcl__pb2.PutFileResponse.FromString,
+                request_serializer=lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.PutFileRequest.SerializeToString,
+                response_deserializer=lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.PutFileResponse.FromString,
                 _registered_method=True)
 
 
@@ -90,18 +90,18 @@ def add_RemoteTclServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'tcl': grpc.unary_unary_rpc_method_handler(
                     servicer.tcl,
-                    request_deserializer=ViPyTcl_dot_core_dot_remote__tcl__pb2.TclRequest.FromString,
-                    response_serializer=ViPyTcl_dot_core_dot_remote__tcl__pb2.TclResponse.SerializeToString,
+                    request_deserializer=lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.TclRequest.FromString,
+                    response_serializer=lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.TclResponse.SerializeToString,
             ),
             'get_file': grpc.unary_unary_rpc_method_handler(
                     servicer.get_file,
-                    request_deserializer=ViPyTcl_dot_core_dot_remote__tcl__pb2.GetFileRequest.FromString,
-                    response_serializer=ViPyTcl_dot_core_dot_remote__tcl__pb2.GetFileResponse.SerializeToString,
+                    request_deserializer=lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.GetFileRequest.FromString,
+                    response_serializer=lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.GetFileResponse.SerializeToString,
             ),
             'put_file': grpc.unary_unary_rpc_method_handler(
                     servicer.put_file,
-                    request_deserializer=ViPyTcl_dot_core_dot_remote__tcl__pb2.PutFileRequest.FromString,
-                    response_serializer=ViPyTcl_dot_core_dot_remote__tcl__pb2.PutFileResponse.SerializeToString,
+                    request_deserializer=lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.PutFileRequest.FromString,
+                    response_serializer=lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.PutFileResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -133,8 +133,8 @@ class RemoteTcl(object):
             request,
             target,
             '/remote_tcl.RemoteTcl/tcl',
-            ViPyTcl_dot_core_dot_remote__tcl__pb2.TclRequest.SerializeToString,
-            ViPyTcl_dot_core_dot_remote__tcl__pb2.TclResponse.FromString,
+            lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.TclRequest.SerializeToString,
+            lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.TclResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -160,8 +160,8 @@ class RemoteTcl(object):
             request,
             target,
             '/remote_tcl.RemoteTcl/get_file',
-            ViPyTcl_dot_core_dot_remote__tcl__pb2.GetFileRequest.SerializeToString,
-            ViPyTcl_dot_core_dot_remote__tcl__pb2.GetFileResponse.FromString,
+            lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.GetFileRequest.SerializeToString,
+            lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.GetFileResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -187,8 +187,8 @@ class RemoteTcl(object):
             request,
             target,
             '/remote_tcl.RemoteTcl/put_file',
-            ViPyTcl_dot_core_dot_remote__tcl__pb2.PutFileRequest.SerializeToString,
-            ViPyTcl_dot_core_dot_remote__tcl__pb2.PutFileResponse.FromString,
+            lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.PutFileRequest.SerializeToString,
+            lib_dot_ViPyTcl_dot_core_dot_remote__tcl__pb2.PutFileResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -1,3 +1,4 @@
+import logging
 import os
 from .utils import my_logger as _my_logger
 from .base import *
@@ -35,12 +36,12 @@ def program_bits(bits_path: str, vivado_bat_path: str = ""):
         raise FileNotFoundError(f"bit file not found: {bits_path}")
 
     bit_path = bits_path.replace("\\", "/")
-    _tcl_popen.run("\n".join(("open_hw_manager",
+    _tcl_popen.tcl("\n".join(("open_hw_manager",
                               "connect_hw_server",
                               "open_hw_target",
                               "current_hw_device [lindex [get_hw_devices] 0]",
                               "refresh_hw_device -update_hw_probes false [current_hw_device]",
-                              f"set_property PROGRAM.FILE {bit_path} [current_hw_device]",
+                              f"set_property PROGRAM.FILE {{{bit_path}}} [current_hw_device]",
                               "program_hw_devices [current_hw_device]",
                               "close_hw_manager")))
 
@@ -52,7 +53,7 @@ def tcl(cmd: str, vivado_bat_path: str = ""):
     if not _tcl_popen:
         _tcl_popen = TclProcessPopen(vivado_bat_path, output=True)
 
-    return _tcl_popen.run(cmd)
+    return _tcl_popen.tcl(cmd)
 
 
 def terminate():
